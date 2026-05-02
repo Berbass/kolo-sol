@@ -103,4 +103,113 @@ describe("KOLO", function () {
             "InsufficientReserve"
         );
     });
+
+    it("setReserveVault access control and logic", async function () {
+        await expect(kolo.connect(alice).setReserveVault(bob.address)).to.be.revertedWithCustomError(
+            kolo,
+            "Unauthorized"
+        );
+        
+        await expect(kolo.connect(owner).setReserveVault(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+            kolo,
+            "InvalidVaultAddress"
+        );
+
+        await kolo.connect(owner).setReserveVault(bob.address);
+        expect(await kolo.reserveVault()).to.equal(bob.address);
+    });
+
+    it("mint correctly accounts for new reserveVault balance", async function () {
+        const reserveEth = ethers.parseUnits("10", 6);
+        // bob has no eurc initially, so minting should fail
+        await kolo.connect(owner).setReserveVault(bob.address);
+        
+        await expect(kolo.connect(owner).mint(alice.address, 1000)).to.be.revertedWithCustomError(
+            kolo,
+            "InsufficientReserve"
+        );
+
+        // Give bob some EURc
+        await mockEurc.connect(eurcOwner).transfer(bob.address, reserveEth);
+        
+        // Now minting should succeed up to the new reserve
+        const amount = await kolo.convertFromEurc(reserveEth);
+        await kolo.connect(owner).mint(alice.address, amount);
+        expect(await kolo.balanceOf(alice.address)).to.equal(amount);
+        
+        // Exceeding the reserve of bob should fail
+        await expect(kolo.connect(owner).mint(alice.address, 1)).to.be.revertedWithCustomError(
+            kolo,
+            "InsufficientReserve"
+        );
+    });
+
+    it("burnFrom functionality", async function () {
+        const amount = 500;
+        await kolo.connect(owner).mint(alice.address, amount);
+        
+        // approve bob to burn on alice's behalf
+        await kolo.connect(alice).approve(bob.address, 200);
+        
+        await kolo.connect(bob).burnFrom(alice.address, 150);
+        expect(await kolo.balanceOf(alice.address)).to.equal(amount - 150);
+        expect(await kolo.allowance(alice.address, bob.address)).to.equal(50);
+        
+        // pausing should revert burnFrom
+        await kolo.connect(owner).pause();
+        await expect(kolo.connect(bob).burnFrom(alice.address, 50)).to.be.revertedWithCustomError(
+            kolo,
+            "ContractPaused"
+        );
+    });
+
+    it("transferWithPermit executes with valid signature", async function () {
+        const amount = 1000;
+        await kolo.connect(owner).mint(alice.address, amount);
+
+        const nonce = await kolo.nonces(alice.address);
+        const deadline = ethers.MaxUint256;
+        
+        // build permit signature
+        const chainId = (await ethers.provider.getNetwork()).chainId;
+        const domain = {
+            name: await kolo.name(),
+            version: "1",
+            chainId: chainId,
+            verifyingContract: await kolo.getAddress()
+        };
+        const types = {
+            Permit: [
+                {name: "owner", type: "address"},
+                {name: "spender", type: "address"},
+                {name: "value", type: "uint256"},
+                {name: "nonce", type: "uint256"},
+                {name: "deadline", type: "uint256"}
+            ]
+        };
+        const value = {
+            owner: alice.address,
+            spender: bob.address,
+            value: 200,
+            nonce: nonce,
+            deadline: deadline
+        };
+
+        const signature = await alice.signTypedData(domain, types, value);
+        const {v, r, s} = ethers.Signature.from(signature);
+
+        // bob acts as a relayer executing transferWithPermit
+        await kolo.connect(bob).transferWithPermit(
+            alice.address,
+            bob.address,
+            200,
+            deadline,
+            v,
+            r,
+            s
+        );
+
+        expect(await kolo.balanceOf(bob.address)).to.equal(200);
+        expect(await kolo.balanceOf(alice.address)).to.equal(800);
+    });
 });

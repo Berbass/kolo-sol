@@ -129,4 +129,113 @@ contract KOLOTest is Test {
         vm.expectRevert(abi.encodeWithSelector(KOLO.InsufficientReserve.selector, requiredEurc, availableEurc));
         kolo.mint(owner, amount);
     }
+
+    function testSetReserveVaultAccessAndLogic() public {
+        vm.expectRevert(KOLO.Unauthorized.selector);
+        vm.prank(alice);
+        kolo.setReserveVault(bob);
+
+        vm.expectRevert(KOLO.InvalidVaultAddress.selector);
+        vm.prank(owner);
+        kolo.setReserveVault(address(0));
+
+        vm.prank(owner);
+        kolo.setReserveVault(bob);
+        assertEq(kolo.reserveVault(), bob);
+    }
+
+    function testMintCorrectlyAccountsForNewReserveVaultBalance() public {
+        vm.prank(owner);
+        kolo.setReserveVault(bob);
+
+        // bob initially has 0 EURc in our mock (since we only mocked `owner`)
+        vm.mockCall(
+            kolo.eurcAddress(),
+            abi.encodeWithSelector(bytes4(keccak256("balanceOf(address)")), bob),
+            abi.encode(0)
+        );
+
+        uint256 req1 = kolo.convertToEurc(1000);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(KOLO.InsufficientReserve.selector, req1, 0));
+        kolo.mint(alice, 1000);
+
+        // Provide EURc equivalent for 2000 KOL to bob
+        uint256 newReserve = kolo.convertToEurc(2000);
+        vm.mockCall(
+            kolo.eurcAddress(),
+            abi.encodeWithSelector(bytes4(keccak256("balanceOf(address)")), bob),
+            abi.encode(newReserve)
+        );
+
+        // Mint should succeed
+        vm.prank(owner);
+        kolo.mint(alice, 2000);
+        assertEq(kolo.balanceOf(alice), 2000);
+
+        // Exceeding the reserve should fail
+        uint256 req2 = kolo.convertToEurc(2001);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(KOLO.InsufficientReserve.selector, req2, newReserve));
+        kolo.mint(alice, 1);
+    }
+
+    function testBurnFromFunctionality() public {
+        uint256 amount = 500;
+        vm.prank(owner);
+        kolo.mint(alice, amount);
+
+        vm.prank(alice);
+        kolo.approve(bob, 200);
+
+        vm.prank(bob);
+        kolo.burnFrom(alice, 150);
+
+        assertEq(kolo.balanceOf(alice), amount - 150);
+        assertEq(kolo.allowance(alice, bob), 50);
+
+        // paused
+        vm.prank(owner);
+        kolo.pause();
+
+        vm.expectRevert(KOLO.ContractPaused.selector);
+        vm.prank(bob);
+        kolo.burnFrom(alice, 50);
+    }
+
+    function testTransferWithPermitExecutesWithValidSignature() public {
+        uint256 amount = 1000;
+        vm.prank(owner);
+        kolo.mint(alice, amount);
+
+        // let's create a real wallet
+        (address signer, uint256 pk) = makeAddrAndKey("signer");
+
+        vm.prank(owner);
+        kolo.mint(signer, amount);
+
+        uint256 value = 200;
+        uint256 deadline = block.timestamp + 1000;
+        uint256 nonce = kolo.nonces(signer);
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
+                signer,
+                bob,
+                value,
+                nonce,
+                deadline
+            )
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", kolo.DOMAIN_SEPARATOR(), structHash));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+
+        vm.prank(bob);
+        kolo.transferWithPermit(signer, bob, value, deadline, v, r, s);
+
+        assertEq(kolo.balanceOf(bob), value);
+        assertEq(kolo.balanceOf(signer), amount - value);
+    }
 }
