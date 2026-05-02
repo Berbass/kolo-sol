@@ -30,8 +30,9 @@ describe("KOLO", function () {
     });
 
     it("non-owner cannot mint", async function () {
-        await expect(kolo.connect(alice).mint(alice.address, 1)).to.be.revertedWith(
-            "KOLO: Only owner allowed"
+        await expect(kolo.connect(alice).mint(alice.address, 1)).to.be.revertedWithCustomError(
+            kolo,
+            "Unauthorized"
         );
     });
 
@@ -46,14 +47,16 @@ describe("KOLO", function () {
         const amount = 300;
         await kolo.connect(owner).mint(alice.address, amount);
         await kolo.connect(owner).pause();
-        await expect(kolo.connect(alice).burn(100)).to.be.revertedWith(
-            "KOLO: Contract is paused"
+        await expect(kolo.connect(alice).burn(100)).to.be.revertedWithCustomError(
+            kolo,
+            "ContractPaused"
         );
     });
 
     it("pause/unpause access control", async function () {
-        await expect(kolo.connect(alice).pause()).to.be.revertedWith(
-            "KOLO: Only owner allowed"
+        await expect(kolo.connect(alice).pause()).to.be.revertedWithCustomError(
+            kolo,
+            "Unauthorized"
         );
 
         await kolo.connect(owner).pause();
@@ -72,8 +75,9 @@ describe("KOLO", function () {
 
         await kolo.connect(owner).pause();
 
-        await expect(kolo.connect(owner).transfer(bob.address, 1)).to.be.revertedWith(
-            "KOLO: Contract is paused"
+        await expect(kolo.connect(owner).transfer(bob.address, 1)).to.be.revertedWithCustomError(
+            kolo,
+            "ContractPaused"
         );
     });
 
@@ -94,8 +98,9 @@ describe("KOLO", function () {
         const maxKlo = await kolo.convertFromEurc(ethers.parseUnits("20", 6));
 
         const amount = maxKlo + ethers.parseUnits("0.000001", 6); // exceeds mocked reserve by smallest unit
-        await expect(kolo.connect(owner).mint(owner.address, amount)).to.be.revertedWith(
-            "KOLO: Insufficient EURc reserve"
+        await expect(kolo.connect(owner).mint(owner.address, amount)).to.be.revertedWithCustomError(
+            kolo,
+            "InsufficientReserve"
         );
     });
 });

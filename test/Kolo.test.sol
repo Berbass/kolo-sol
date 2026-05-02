@@ -39,7 +39,7 @@ contract KOLOTest is Test {
     }
 
     function testNonOwnerCannotMint() public {
-        vm.expectRevert(bytes("KOLO: Only owner allowed"));
+        vm.expectRevert(KOLO.Unauthorized.selector);
         vm.prank(alice);
         kolo.mint(alice, 1);
     }
@@ -63,14 +63,14 @@ contract KOLOTest is Test {
         vm.prank(owner);
         kolo.pause();
 
-        vm.expectRevert(bytes("KOLO: Contract is paused"));
+        vm.expectRevert(KOLO.ContractPaused.selector);
         vm.prank(alice);
         kolo.burn(100);
     }
 
     function testPauseUnpauseAccessControl() public {
         // Non-owner cannot pause
-        vm.expectRevert(bytes("KOLO: Only owner allowed"));
+        vm.expectRevert(KOLO.Unauthorized.selector);
         vm.prank(alice);
         kolo.pause();
 
@@ -99,7 +99,7 @@ contract KOLOTest is Test {
         kolo.pause();
 
         // Transfers should revert while paused
-        vm.expectRevert(bytes("KOLO: Contract is paused"));
+        vm.expectRevert(KOLO.ContractPaused.selector);
         vm.prank(owner);
         kolo.transfer(bob, 1);
     }
@@ -121,8 +121,12 @@ contract KOLOTest is Test {
     function testMintRevertsWhenExceedEURcReserve() public {
         // The mocked EURc reserve supports up to 5000 KOL.
         uint256 amount = 5001; // exceeds mocked reserve
+
+        uint256 requiredEurc = kolo.convertToEurc(amount + kolo.totalSupply());
+        uint256 availableEurc = 5000 * 1525 / 1000; // Mocked amount above
+
         vm.prank(owner);
-        vm.expectRevert(bytes("KOLO: Insufficient EURc reserve"));
+        vm.expectRevert(abi.encodeWithSelector(KOLO.InsufficientReserve.selector, requiredEurc, availableEurc));
         kolo.mint(owner, amount);
     }
 }

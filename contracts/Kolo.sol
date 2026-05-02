@@ -15,6 +15,11 @@ contract KOLO is ERC20, ERC20Permit, Ownable, Pausable {
 
     address public immutable eurcAddress; // 0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42 maybe? (Mainnet EURc address)
 
+    // --- ERRORS ---
+    error Unauthorized();
+    error ContractPaused();
+    error InsufficientReserve(uint256 required, uint256 available);
+
     // Events for tracking
     event Minted(address indexed to, uint256 amount);
     event Burned(address indexed from, uint256 amount);
@@ -30,22 +35,22 @@ contract KOLO is ERC20, ERC20Permit, Ownable, Pausable {
     // --- MODIFIERS ---
 
     modifier onlyOwnerWithCustomError() {
-        require(msg.sender == owner(), "KOLO: Only owner allowed");
+        if (msg.sender != owner()) revert Unauthorized();
         _;
     }
 
     modifier whenNotPausedWithCustomError() {
-        require(!paused(), "KOLO: Contract is paused");
+        if (paused()) revert ContractPaused();
         _;
     }
 
     modifier ensureEURcReserve(uint256 koloAmount) {
         uint256 requiredEurc = convertToEurc(koloAmount + totalSupply());
         // We check the owner's balance as the reserve vault for the MVP
-        require(
-            IERC20(eurcAddress).balanceOf(owner()) >= requiredEurc,
-            "KOLO: Insufficient EURc reserve"
-        );
+        uint256 availableEurc = IERC20(eurcAddress).balanceOf(owner());
+        if (availableEurc < requiredEurc) {
+            revert InsufficientReserve(requiredEurc, availableEurc);
+        }
         _;
     }
 
